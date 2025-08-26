@@ -24,7 +24,7 @@ chmod +x ./kind
 sudo mv ./kind /usr/bin/kind
 
 # installing kustomize
-curl -lO https://github.com/kubernetes-sigs/kustomize/releases/download/kustomize%2Fv5.7.1/kustomize_v5.7.1_linux_amd64.tar.gz
+curl -LO https://github.com/kubernetes-sigs/kustomize/releases/download/kustomize%2Fv5.7.1/kustomize_v5.7.1_linux_amd64.tar.gz
 tar xf kustomize_v5.7.1_linux_amd64.tar.gz
 chmod +x kustomize
 sudo mv kustomize /usr/bin/kustomize
