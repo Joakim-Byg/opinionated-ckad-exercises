@@ -9,52 +9,100 @@ This document contains the step-by-step instructions, commands, and reflection q
 
 * A copy of this workshop's application repository.
 
-## Lab 4: Visualizing Your Application's Health
-**Objective:** Gain visibility into the application using the Grafana stack.
+## Bonus Lab A: Crafting the Perfect Service
+**Objective:** To understand how a Service uses labels and selectors to connect to a Deployment's Pods.
 
-1. **Deploy the Observability Stack:**
+**Scenario:** The ```kubectl expose``` command is shortcut, but you will most likely write your own Service manifests. 
+Your task is to manually create a ```ClusterIP``` Service that correctly routes traffic to the ```echo-app``` deployment.
 
-   * (Instructor will provide manifests/commands to deploy Grafana, Loki, Tempo, Prometheus, and the Otel Collector).
 
-2. **Access Grafana:**
+1. **Create a Service Manifest:**
 
-   * The instructor will provide the URL or port-forward command to access the Grafana UI.
+   * Create a new file named ```service.yaml```.
 
-3. **Guided Exploration:**
+   * Write the YAML for a Service from scratch. Pay close attention to the selector field. It must match the labels on the Pods created by your Deployment.
+     ```yaml
+     apiVersion: v1
+     kind: Service
+     metadata:
+       name: echo-app-service
+       namespace: workshop
+     spec:
+       type: ClusterIP
+       # This selector is the crucial link.
+       # It must match the labels in your Deployment's pod template.
+       selector:
+         app: echo-app
+       ports:
+         - protocol: TCP
+           port: 8080        # The port the Service will be available on
+           targetPort: 8080  # The port the container is listening on
+     ```
 
-   * **Find Your Logs:**
+2. **Apply the Service Manifest:**
+    ```shell
+    kubectl apply -f service.yaml
+    ```
 
-     * In Grafana, go to the "Explore" tab.
-    
-     * Select the "Loki" data source.
-    
-     * Use the Log browser or a LogQL query like ```{namespace="workshop"}``` to find your application's logs.
+3. **Verify the Connection:**
 
-   * **Find Your Metrics:**
+    * The most important verification step is to check the Service's "Endpoints". If the selector is correct, Kubernetes 
+      will list the IP addresses of your ```echo-app``` Pods here.
+      ```shell
+      # Describe the service and look for the "Endpoints" section
+      kubectl describe service echo-app-service -n workshop
+      ```
+   
+    * If you see valid IP addresses listed, your Service is correctly connected!
 
-     * In the "Explore" tab, select the "Prometheus" or "Mimir" data source.
+4. **Test Access:**
 
-     * In the query box, start typing ```http_requests_total``` and select the metric for your app.
+    * Use ```port-forward``` to connect to your new manual service and test it.
+      ```shell
+      # In a new terminal
+      kubectl port-forward svc/echo-app-service 8080:8080 -n workshop
+      
+      # Test it
+      curl http://localhost:8080
+      ```
 
-     * Click "Run query" to see a graph of requests over time.
+### 🤔 Reflection Questions:
 
-   * **Find Your Traces:**
+* What would happen if the ```selector``` in ```service.yaml``` did not match the labels on the Pods? What would you 
+  see in the Endpoints list?
 
-     * In the "Explore" tab, select the "Tempo" data source.
+* A Service can select Pods from different Deployments. Why might this be useful?
 
-     * Click "Search" to find recent traces from your application. Click on one to see the full request lifecycle.
-
-4. **Bonus Lab: Create an Alert:**
-
-   * Navigate to "Alerting" in the Grafana side menu.
-
-   * Create a new "Alert rule".
-
-   * Use the Prometheus data source.
-
-   * Create a query that will trigger an alert. For example: ```http_requests_total{job="echo-app"} == 0```
-
-   * Configure the rule to fire if the condition is met for 1 minute.
+## Bonus Lab B: "Exposing Services with Ingress"
+The first step is to install one an ingress controller (KinD is not shipped with one). 
+For this we pick the NGINX Ingress Controller is very common and easy to set up with a single command:
+1. **Install an Ingress Controller:**
+    ```shell
+   kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/main/deploy/static/provider/kind/deploy.yaml
+   ```
+2. **Create an Ingress Manifest:** Participants would create an ```ingress.yaml``` file to route traffic to their 
+   ```echo-app-service```
+   ```yaml
+   apiVersion: networking.k8s.io/v1
+   kind: Ingress
+   metadata:
+     name: echo-ingress
+     namespace: workshop
+   spec:
+     rules:
+       - host: "echo.local"
+         http:
+           paths:
+             - path: /
+               pathType: Prefix
+               backend:
+                 service:
+                   name: echo-app-service
+                   port:
+                     number: 8080
+   ```
+3. **Apply and Test:**  Since ```echo.local``` isn't a real domain, we should use ```curl``` command with a ```--resolve``` 
+   flag to simulate DNS:
 
 ### 🤔 Reflection Questions:
 
@@ -65,6 +113,24 @@ This document contains the step-by-step instructions, commands, and reflection q
 ## Lab 5: Automated Reconciliation with FluxCD
 **Objective:** Manage the application's lifecycle declaratively using GitOps.
 
+### Prerequisites: Setting up a Local Git Server (Gitea)
+For this lab, we will use a Git server running locally in a Docker container. This keeps the entire exercise on your 
+machine.
+1. **Run Gitea Container:** Start a Gitea Git server.
+   ```shell
+   docker run -d --name=gitea \
+        -p 3000:3000 \
+        -p 2222:22 \
+        -v gitea-data:/data \
+        gitea/gitea:latest
+   ```
+2. **Configure Gitea:**
+   * Open http://localhost:3000 in your browser and complete the initial setup. 
+   * Create a user (e.g., ```workshop``` with password ```workshop```). 
+   * Create a new, empty repository named ```echo-app-flux```.
+
+### Main Lab Steps
+
 1. **Clean Up:**
 
     We will let FluxCD manage everything from now on.
@@ -73,23 +139,72 @@ This document contains the step-by-step instructions, commands, and reflection q
 
 2. **Prepare Your Repository:**
 
-   * Ensure your forked Git repository contains the final ```deployment.yaml``` from Lab 3, along with manifests for the ```namespace```, ```service```, ```configmap```, and ```secret```.
+    * Clone your new, empty repository:
+      ```shell
+      git clone http://localhost:3000/workshop/echo-app-flux.git
+      cd echo-app-flux
+      ```
+    * Create a Kustomize structure. This is a best practice for managing different environments.
+      ```shell
+      mkdir -p base overlays/staging
+      ```
+    * Move your manifests into ```base/```. This directory holds the common, unmodified YAML files.
+      ```shell
+      # Assuming your YAML files are in the current directory
+      mv deployment.yaml service.yaml ingress.yaml ... base/
+      ```
+    * Create ```base/kustomization.yaml```. This file tells Kustomize which resources are part of the base.
+      ```yaml
+      # base/kustomization.yaml
+      apiVersion: kustomize.config.k8s.io/v1beta1
+      kind: Kustomization
+      resources:
+       - deployment.yaml
+       - service.yaml
+       - ingress.yaml
+      # Add other base resources here
+      ```
+    * Create ```overlays/staging/kustomization.yaml```. This file defines our staging environment. It uses the base and
+      can apply patches.
+      ```yaml
+      # overlays/staging/kustomization.yaml
+      apiVersion: kustomize.config.k8s.io/v1beta1
+      kind: Kustomization
+      bases:
+        - ../../base
+      patchesStrategicMerge:
+        - patch-replicas.yaml 
+      ```
+    * Commit and push the files:
+      ```shell
+      git add .
+      git commit -m "Initial application manifests"
+      git push
+      ```
 
 3. **Install Flux CLI:**
-
-   * (Instructor will provide OS-specific instructions for installing the ```flux``` CLI).
-
-4. **Bootstrap FluxCD:**
-
-   * This magical command installs Flux into your cluster and configures it to watch your repository.
+   * Install the CLI
      ```shell
-     # Replace with your GitHub username and repository name
-     flux bootstrap github \
-         --owner=<YOUR_GITHUB_USERNAME> \
-         --repository=<YOUR_REPOSITORY_NAME> \
-         --branch=main \
-         --path=./ \
-         --personal
+     sudo curl -s https://fluxcd.io/install.sh | sudo bash
+     ```
+   * Install the flux-operator:
+     ```shell
+     helm install flux-operator oci://ghcr.io/controlplaneio-fluxcd/charts/flux-operator \
+          --namespace flux-system \
+          --create-namespace
+     ```
+4. **Bootstrap FluxCD:**
+5. 
+   * Now bootstrap the git-repo and the cluster:
+     ```shell
+     # Replace with the gitea username and repository name
+     flux bootstrap gitea \
+          --token-auth \
+          --owner=my-gitea-username \
+          --repository=my-repository-name \
+          --branch=main \
+          --path=clusters/my-cluster \
+          --personal
      ```
 
 5. **Watch it Work:**
