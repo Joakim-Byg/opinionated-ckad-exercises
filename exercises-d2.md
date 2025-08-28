@@ -9,7 +9,7 @@ This document contains the step-by-step instructions, commands, and reflection q
 
 * A copy of this workshop's application repository.
 
-## Bonus Lab A: Crafting the Perfect Service
+## Bonus Lab A: Crafting a Service
 **Objective:** To understand how a Service uses labels and selectors to connect to a Deployment's Pods.
 
 **Scenario:** The ```kubectl expose``` command is shortcut, but you will most likely write your own Service manifests. 
